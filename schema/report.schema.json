@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "linxdox_patch audit report",
+  "type": "object",
+  "required": ["generated_at", "tool_version", "devices"],
+  "properties": {
+    "generated_at": {"type": "string", "description": "ISO8601 timestamp"},
+    "tool_version": {"type": "string"},
+    "site": {"type": "string"},
+    "devices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ip", "reachable_ssh", "result"],
+        "properties": {
+          "ip": {"type": "string"},
+          "reachable_ssh": {"type": "boolean"},
+          "result": {"type": "string", "enum": ["ok", "fail"]},
+          "detail": {"type": "string"},
+          "hostname": {"type": "string"},
+          "linxdot_release": {"type": "string"},
+          "patch_version": {"type": "string"},
+          "mode": {"type": "string"},
+          "disk_root_use_pct": {"type": "integer"},
+          "time_stack": {
+            "type": "object",
+            "properties": {
+              "sysntpd": {"type": "boolean"},
+              "ntpd": {"type": "boolean"},
+              "chronyd": {"type": "boolean"},
+              "ntpclient": {"type": "boolean"},
+              "luci_ntpc_installed": {"type": "boolean"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

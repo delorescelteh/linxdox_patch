@@ -1,0 +1,17 @@
+# secrets
+*.pem
+*.key
+*.p12
+*.pfx
+*.ovpn
+.env
+
+# reports
+report_*.csv
+report_*.json
+
+# macOS
+.DS_Store
+
+# dist artifacts
+/dist/

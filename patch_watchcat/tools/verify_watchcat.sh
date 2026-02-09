@@ -28,6 +28,11 @@ grep -n "watchcat_service_recover\|service_recover" /usr/bin/watchcat.sh || true
 
 echo
 
+echo '=== chirpstack watch config (if present) ==='
+uci -q show watchcat | grep -E 'chirpstack_' || true
+
+echo
+
 echo '=== running watchcat process ==='
 ps w | grep -i watchcat | grep -v grep || true
 

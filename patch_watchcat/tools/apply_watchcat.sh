@@ -36,6 +36,25 @@ uci -q set watchcat.@watchcat[0].reboot_backoff='1h' || true
 uci -q set watchcat.@watchcat[0].disk_path='/' || true
 uci -q set watchcat.@watchcat[0].disk_min_kb='200000' || true
 uci -q set watchcat.@watchcat[0].docker_check='1' || true
+
+# ChirpStack stack check + recovery
+uci -q set watchcat.@watchcat[0].chirpstack_check='1' || true
+uci -q set watchcat.@watchcat[0].chirpstack_compose_dir='/mnt/opensource-system/chirpstack-docker' || true
+# Recovery strategy:
+# - docker_restart_then_compose: try docker restart for failed containers, then compose up -d
+uci -q set watchcat.@watchcat[0].chirpstack_recover='docker_restart_then_compose' || true
+uci -q set watchcat.@watchcat[0].chirpstack_recover_cooldown='300' || true
+# Prefer prefix/substr-based matching to avoid compose project/index changes
+uci -q set watchcat.@watchcat[0].chirpstack_name_prefix='chirpstack-docker_' || true
+# Required components (substring match against running container names under prefix)
+uci -q delete watchcat.@watchcat[0].chirpstack_required 2>/dev/null || true
+uci -q add_list watchcat.@watchcat[0].chirpstack_required='chirpstack-rest-api' || true
+uci -q add_list watchcat.@watchcat[0].chirpstack_required='chirpstack-gateway-bridge' || true
+uci -q add_list watchcat.@watchcat[0].chirpstack_required='chirpstack' || true
+uci -q add_list watchcat.@watchcat[0].chirpstack_required='postgres' || true
+uci -q add_list watchcat.@watchcat[0].chirpstack_required='mosquitto' || true
+uci -q add_list watchcat.@watchcat[0].chirpstack_required='redis' || true
+
 uci -q commit watchcat || true
 
 # --- 1) Patch /etc/init.d/watchcat deterministically (rewrite from known-good template embedded here)
@@ -89,6 +108,14 @@ config_watchcat() {
 	config_get disk_path "$1" disk_path "/"
 	config_get disk_min_kb "$1" disk_min_kb "200000"
 	config_get docker_check "$1" docker_check "1"
+
+	# ChirpStack stack check + recovery
+	config_get chirpstack_check "$1" chirpstack_check "0"
+	config_get chirpstack_compose_dir "$1" chirpstack_compose_dir "/mnt/opensource-system/chirpstack-docker"
+	config_get chirpstack_recover "$1" chirpstack_recover "docker_restart_then_compose"
+	config_get chirpstack_recover_cooldown "$1" chirpstack_recover_cooldown "300"
+	config_get chirpstack_name_prefix "$1" chirpstack_name_prefix "chirpstack-docker_"
+	config_get chirpstack_required "$1" chirpstack_required ""
 
 	# Fix potential typo in mode and provide backward compatibility.
 	[ "$mode" = "allways" ] && mode="periodic_reboot"
@@ -157,7 +184,10 @@ config_watchcat() {
 		;;
 	service_recover)
 		procd_open_instance "watchcat_${1}"
-		procd_set_param command /usr/bin/watchcat.sh "service_recover" "$period" "$(time_to_seconds "$reboot_backoff")" "$disk_path" "$disk_min_kb" "$docker_check"
+		procd_set_param command /usr/bin/watchcat.sh "service_recover" \
+		"$period" "$(time_to_seconds "$reboot_backoff")" \
+		"$disk_path" "$disk_min_kb" "$docker_check" \
+		"$chirpstack_check" "$chirpstack_compose_dir" "$chirpstack_recover" "$chirpstack_recover_cooldown" "$chirpstack_name_prefix" "$chirpstack_required"
 		procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
 		procd_close_instance
 		;;
@@ -198,9 +228,16 @@ watchcat_service_recover() {
   disk_path="$3"
   disk_min_kb="$4"
   docker_check="$5"
+  chirpstack_check="$6"
+  chirpstack_compose_dir="$7"
+  chirpstack_recover="$8"
+  chirpstack_recover_cooldown="$9"
+  chirpstack_name_prefix="${10}"
+  chirpstack_required="${11}"
 
   stamp_file=/tmp/watchcat_last_reboot_epoch
   last_ok_file=/tmp/watchcat_last_ok_epoch
+  chirp_recover_stamp=/tmp/watchcat_last_chirpstack_recover_epoch
 
   now="$(cut -d. -f1 /proc/uptime)"
   [ "$now" -lt "$failure_period" ] && sleep "$((failure_period - now))"
@@ -217,6 +254,75 @@ watchcat_service_recover() {
           ok=0
           logger -p daemon.err -t "watchcat[$$]" "service_recover: disk_low(${disk_path} free_kb=${free_kb} < ${disk_min_kb})"
         fi
+      fi
+    fi
+
+    # ChirpStack stack check (containers)
+    if [ "$chirpstack_check" = "1" ]; then
+      if command -v docker >/dev/null 2>&1; then
+        # Build running container name list under prefix
+        running_names=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^${chirpstack_name_prefix}" || true)
+
+        missing=""
+        for req in $chirpstack_required; do
+          echo "$running_names" | grep -q "$req" || missing="$missing $req"
+        done
+        missing=$(echo "$missing" | awk '{$1=$1;print}')
+
+        if [ -z "$running_names" ]; then
+          ok=0
+          logger -p daemon.err -t "watchcat[$$]" "service_recover: chirpstack_unhealthy no containers with prefix=${chirpstack_name_prefix}"
+        elif [ -n "$missing" ]; then
+          ok=0
+          logger -p daemon.err -t "watchcat[$$]" "service_recover: chirpstack_unhealthy missing_components=[$missing] prefix=${chirpstack_name_prefix}"
+        fi
+
+        if [ "$ok" = "0" ]; then
+
+          # Try recover chirpstack stack (rate-limited)
+          now_epoch=$(date +%s)
+          last_try=$(cat "$chirp_recover_stamp" 2>/dev/null || echo 0)
+          since=$((now_epoch - last_try))
+          if [ "$since" -ge "$chirpstack_recover_cooldown" ] 2>/dev/null; then
+            echo "$now_epoch" > "$chirp_recover_stamp" 2>/dev/null || true
+
+            # choose compose command
+            if command -v docker-compose >/dev/null 2>&1; then
+              CCMD="docker-compose"
+            elif docker compose version >/dev/null 2>&1; then
+              CCMD="docker compose"
+            else
+              CCMD=""
+            fi
+
+            if [ "$chirpstack_recover" = "docker_restart_then_compose" ]; then
+              # Restart any non-running containers under prefix (best-effort)
+              all_names=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^${chirpstack_name_prefix}" || true)
+              for n in $all_names; do
+                st=$(docker inspect -f '{{.State.Status}}' "$n" 2>/dev/null || echo "missing")
+                if [ "$st" != "running" ] && [ "$st" != "missing" ]; then
+                  logger -p daemon.err -t "watchcat[$$]" "service_recover: trying chirpstack recover via docker restart $n (status=$st)"
+                  docker restart "$n" >/dev/null 2>&1 || true
+                fi
+              done
+              # Then reconcile using compose
+              if [ -n "$CCMD" ] && [ -d "$chirpstack_compose_dir" ]; then
+                logger -p daemon.err -t "watchcat[$$]" "service_recover: chirpstack recover via compose up -d (dir=$chirpstack_compose_dir)"
+                ( cd "$chirpstack_compose_dir" && $CCMD up -d --remove-orphans ) >/dev/null 2>&1 || true
+              fi
+            elif [ "$chirpstack_recover" = "compose_up" ]; then
+              if [ -n "$CCMD" ] && [ -d "$chirpstack_compose_dir" ]; then
+                logger -p daemon.err -t "watchcat[$$]" "service_recover: chirpstack recover via compose up -d (dir=$chirpstack_compose_dir)"
+                ( cd "$chirpstack_compose_dir" && $CCMD up -d --remove-orphans ) >/dev/null 2>&1 || true
+              fi
+            fi
+          else
+            logger -p daemon.warn -t "watchcat[$$]" "service_recover: chirpstack recover suppressed by cooldown (since=${since}s < ${chirpstack_recover_cooldown}s)"
+          fi
+        fi
+      else
+        ok=0
+        logger -p daemon.err -t "watchcat[$$]" "service_recover: docker_cli_missing (cannot check chirpstack containers)"
       fi
     fi
 
@@ -271,7 +377,7 @@ EOF
 # We match a line that is exactly "*)" at line start.
 sed '/^\*)/i\
 service_recover)\
-\twatchcat_service_recover "$2" "$3" "$4" "$5" "$6"\
+\twatchcat_service_recover "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}"\
 \t;;\
 ' /tmp/watchcat.sh.new > /tmp/watchcat.sh.final
 

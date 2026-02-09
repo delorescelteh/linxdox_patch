@@ -12,15 +12,20 @@ Patch the **existing watchcat** (UCI + init.d + `/usr/bin/watchcat.sh`) so it ca
 - Mode name: `service_recover`
 
 ### What it checks (phase 1)
-Because container list is pending (we will decide after ChirpStack install), phase 1 implements:
 1) Disk free space threshold (configurable)
 2) Docker daemon availability (configurable)
+3) ChirpStack stack containers running (prefix + required components match)
 
 ### Actions (phase 1)
-- If disk free below threshold: log error; (no automatic cleanup in phase 1)
-- If docker not healthy: restart dockerd
-- If recovery repeatedly fails and exceeds `failure_period`, do a normal reboot, rate-limited:
-  - backoff: 1 hour (configurable)
+Layered recovery (least disruptive first):
+1) If disk free below threshold: log error; (no automatic cleanup in phase 1)
+2) If ChirpStack stack unhealthy:
+   - detection uses `chirpstack_name_prefix` + `chirpstack_required` (substring match against **running** container names)
+   - try **container restart** first (restart any non-running containers under the prefix)
+   - then reconcile using compose: `docker-compose up -d --remove-orphans` (or `docker compose up -d --remove-orphans`) in configured compose dir
+   - rate-limit recovery by `chirpstack_recover_cooldown`
+3) If docker not healthy: restart dockerd
+4) If failure persists and exceeds `failure_period`, do a normal reboot, rate-limited by `reboot_backoff` (default 1h)
 
 ## UCI mapping (proposed)
 `/etc/config/watchcat` new options in `config watchcat`:

@@ -1,25 +1,59 @@
 #!/bin/sh
-# Apply patch_watchcat (service_recover mode) to target device.
-#
-# Design goals:
-# - Patch the existing watchcat (UCI + init.d + /usr/bin/watchcat.sh)
-# - NO external ping dependency
-# - service_recover mode checks (phase-1): disk space + docker health
-# - Reboot only after failure_period, and rate-limited by reboot_backoff (default 1h)
-#
-# BusyBox-safe: uses sh + sed + grep + head/tail + cp/mv.
+set -eu
+
+# deploy_watchcat_patch.sh (customer-facing)
+# One command deploy with guided prompts.
 #
 # Usage:
-#   ./apply_watchcat.sh root@<ip>
-
-set -eu
-TARGET=${1:-}
-[ -n "$TARGET" ] || { echo "usage: $0 root@<ip>" >&2; exit 2; }
+#   ./deploy_watchcat_patch.sh
+#   ./deploy_watchcat_patch.sh <user@ip>
+#   SSH_OPTS='-J root@jump' ./deploy_watchcat_patch.sh
+#
+# Defaults:
+# - username: root
+# - (ssh will prompt for password; many devices default password is: linxdot)
 
 SSH_CMD=${SSH_CMD:-ssh}
 SSH_OPTS=${SSH_OPTS:-}
 
-$SSH_CMD $SSH_OPTS "$TARGET" 'sh -s' <<'SH'
+DEFAULT_USER=${DEFAULT_USER:-root}
+DEFAULT_PREFIX=${DEFAULT_PREFIX:-chirpstack-docker_}
+DEFAULT_REQUIRED=${DEFAULT_REQUIRED:-"chirpstack chirpstack-gateway-bridge chirpstack-rest-api postgres mosquitto redis"}
+DEFAULT_COMPOSE_DIR=${DEFAULT_COMPOSE_DIR:-/mnt/opensource-system/chirpstack-docker}
+
+DEFAULT_PERIOD=${DEFAULT_PERIOD:-1h}
+DEFAULT_REBOOT_BACKOFF=${DEFAULT_REBOOT_BACKOFF:-1h}
+DEFAULT_DISK_PATH=${DEFAULT_DISK_PATH:-/}
+DEFAULT_DISK_MIN_KB=${DEFAULT_DISK_MIN_KB:-200000}
+DEFAULT_DOCKER_CHECK=${DEFAULT_DOCKER_CHECK:-1}
+DEFAULT_CHIRPSTACK_CHECK=${DEFAULT_CHIRPSTACK_CHECK:-1}
+DEFAULT_RECOVER=${DEFAULT_RECOVER:-docker_restart_then_compose}
+DEFAULT_RECOVER_COOLDOWN=${DEFAULT_RECOVER_COOLDOWN:-300}
+
+say() { echo "[deploy] $*"; }
+
+die() { echo "[deploy] ERROR: $*" >&2; exit 1; }
+
+TARGET=${1:-}
+
+if [ -z "$TARGET" ]; then
+  printf "Device IP (required): "
+  read -r IP
+  [ -n "$IP" ] || die "IP is required"
+
+  printf "Username (default: %s): " "$DEFAULT_USER"
+  read -r USER
+  USER=${USER:-$DEFAULT_USER}
+
+  TARGET="$USER@$IP"
+fi
+
+say "target=$TARGET"
+[ -n "$SSH_OPTS" ] && say "SSH_OPTS=$SSH_OPTS"
+
+say "NOTE: ssh will prompt for password if needed (often default is 'linxdot')."
+
+$SSH_CMD $SSH_OPTS "$TARGET" 'sh -s' <<'REMOTE'
 set -eu
 
 TS=$(date +%Y%m%d_%H%M%S)
@@ -32,38 +66,45 @@ cp -a /usr/bin/watchcat.sh "$BK/" 2>/dev/null || true
 
 echo "Backup: $BK"
 
-# --- 0) Ensure UCI has our recommended defaults
+# --- Defaults (can be overridden by exporting env vars before running ssh)
+PERIOD="${PERIOD:-1h}"
+REBOOT_BACKOFF="${REBOOT_BACKOFF:-1h}"
+DISK_PATH="${DISK_PATH:-/}"
+DISK_MIN_KB="${DISK_MIN_KB:-200000}"
+DOCKER_CHECK="${DOCKER_CHECK:-1}"
+
+CHIRPSTACK_CHECK="${CHIRPSTACK_CHECK:-1}"
+CHIRPSTACK_COMPOSE_DIR="${CHIRPSTACK_COMPOSE_DIR:-/mnt/opensource-system/chirpstack-docker}"
+CHIRPSTACK_RECOVER="${CHIRPSTACK_RECOVER:-docker_restart_then_compose}"
+CHIRPSTACK_RECOVER_COOLDOWN="${CHIRPSTACK_RECOVER_COOLDOWN:-300}"
+CHIRPSTACK_NAME_PREFIX="${CHIRPSTACK_NAME_PREFIX:-chirpstack-docker_}"
+CHIRPSTACK_REQUIRED="${CHIRPSTACK_REQUIRED:-chirpstack chirpstack-gateway-bridge chirpstack-rest-api postgres mosquitto redis}"
+
+# --- 0) UCI defaults
 uci -q set watchcat.@watchcat[0].mode='service_recover' || true
-uci -q set watchcat.@watchcat[0].period='1h' || true
-uci -q set watchcat.@watchcat[0].reboot_backoff='1h' || true
-uci -q set watchcat.@watchcat[0].disk_path='/' || true
-uci -q set watchcat.@watchcat[0].disk_min_kb='200000' || true
-uci -q set watchcat.@watchcat[0].docker_check='1' || true
-# Conservative disk cleanup (only removes patch-generated backups under /root)
+uci -q set watchcat.@watchcat[0].period="$PERIOD" || true
+uci -q set watchcat.@watchcat[0].reboot_backoff="$REBOOT_BACKOFF" || true
+uci -q set watchcat.@watchcat[0].disk_path="$DISK_PATH" || true
+uci -q set watchcat.@watchcat[0].disk_min_kb="$DISK_MIN_KB" || true
+uci -q set watchcat.@watchcat[0].docker_check="$DOCKER_CHECK" || true
 uci -q set watchcat.@watchcat[0].disk_cleanup_enable='1' || true
 uci -q set watchcat.@watchcat[0].disk_cleanup_keep='3' || true
 
-# ChirpStack stack check + recovery
-uci -q set watchcat.@watchcat[0].chirpstack_check='1' || true
-uci -q set watchcat.@watchcat[0].chirpstack_compose_dir='/mnt/opensource-system/chirpstack-docker' || true
-# Recovery strategy:
-# - docker_restart_then_compose: try docker restart for failed containers, then compose up -d
-uci -q set watchcat.@watchcat[0].chirpstack_recover='docker_restart_then_compose' || true
-uci -q set watchcat.@watchcat[0].chirpstack_recover_cooldown='300' || true
-# Prefer prefix/substr-based matching to avoid compose project/index changes
-uci -q set watchcat.@watchcat[0].chirpstack_name_prefix='chirpstack-docker_' || true
-# Required components (substring match against running container names under prefix)
+uci -q set watchcat.@watchcat[0].chirpstack_check="$CHIRPSTACK_CHECK" || true
+uci -q set watchcat.@watchcat[0].chirpstack_compose_dir="$CHIRPSTACK_COMPOSE_DIR" || true
+uci -q set watchcat.@watchcat[0].chirpstack_recover="$CHIRPSTACK_RECOVER" || true
+uci -q set watchcat.@watchcat[0].chirpstack_recover_cooldown="$CHIRPSTACK_RECOVER_COOLDOWN" || true
+uci -q set watchcat.@watchcat[0].chirpstack_name_prefix="$CHIRPSTACK_NAME_PREFIX" || true
+
+# replace list
 uci -q delete watchcat.@watchcat[0].chirpstack_required 2>/dev/null || true
-uci -q add_list watchcat.@watchcat[0].chirpstack_required='chirpstack-rest-api' || true
-uci -q add_list watchcat.@watchcat[0].chirpstack_required='chirpstack-gateway-bridge' || true
-uci -q add_list watchcat.@watchcat[0].chirpstack_required='chirpstack' || true
-uci -q add_list watchcat.@watchcat[0].chirpstack_required='postgres' || true
-uci -q add_list watchcat.@watchcat[0].chirpstack_required='mosquitto' || true
-uci -q add_list watchcat.@watchcat[0].chirpstack_required='redis' || true
+for req in $CHIRPSTACK_REQUIRED; do
+  uci -q add_list watchcat.@watchcat[0].chirpstack_required="$req" || true
+done
 
 uci -q commit watchcat || true
 
-# --- 1) Patch /etc/init.d/watchcat deterministically (rewrite from known-good template embedded here)
+# --- 1) rewrite /etc/init.d/watchcat (template)
 cat > /etc/init.d/watchcat <<'INIT'
 #!/bin/sh /etc/rc.common
 
@@ -193,9 +234,9 @@ config_watchcat() {
 	service_recover)
 		procd_open_instance "watchcat_${1}"
 		procd_set_param command /usr/bin/watchcat.sh "service_recover" \
-		"$period" "$(time_to_seconds "$reboot_backoff")" \
-		"$disk_path" "$disk_min_kb" "$docker_check" "$disk_cleanup_enable" "$disk_cleanup_keep" \
-		"$chirpstack_check" "$chirpstack_compose_dir" "$chirpstack_recover" "$chirpstack_recover_cooldown" "$chirpstack_name_prefix" "$chirpstack_required"
+			"$period" "$(time_to_seconds "$reboot_backoff")" \
+			"$disk_path" "$disk_min_kb" "$docker_check" "$disk_cleanup_enable" "$disk_cleanup_keep" \
+			"$chirpstack_check" "$chirpstack_compose_dir" "$chirpstack_recover" "$chirpstack_recover_cooldown" "$chirpstack_name_prefix" "$chirpstack_required"
 		procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
 		procd_close_instance
 		;;
@@ -220,13 +261,10 @@ chmod 0755 /etc/init.d/watchcat
 F=/usr/bin/watchcat.sh
 TMP=/tmp/watchcat.sh.clean
 
-# Remove any previously inserted patch blocks and the service_recover case arm (if any)
-# (We'll re-add exactly one block and one case arm.)
 sed -e '/LIVING_UNIVERSE PATCH BEGIN: service_recover/,/LIVING_UNIVERSE PATCH END: service_recover/d' \
     -e '/^service_recover)/,/^\t;;$/d' \
     "$F" > "$TMP"
 
-# Append patch block AFTER shebang, BEFORE any case execution
 PATCH=/tmp/watchcat_service_recover.block
 cat > "$PATCH" <<'EOF'
 # ---- LIVING_UNIVERSE PATCH BEGIN: service_recover ----
@@ -266,14 +304,11 @@ watchcat_service_recover() {
           logger -p daemon.err -t "watchcat[$$]" "service_recover: disk_low(${disk_path} free_kb=${free_kb} < ${disk_min_kb})"
 
           # Conservative cleanup: only remove older patch-generated backups under /root
-          # Keep last N (disk_cleanup_keep) for each known pattern.
           if [ "$disk_cleanup_enable" = "1" ]; then
             now_epoch=$(date +%s)
             last_clean=$(cat "$disk_cleanup_stamp" 2>/dev/null || echo 0)
-            # run at most once per 10 minutes
             if [ $((now_epoch - last_clean)) -ge 600 ] 2>/dev/null; then
               echo "$now_epoch" > "$disk_cleanup_stamp" 2>/dev/null || true
-
               keep="${disk_cleanup_keep:-3}"
               for pat in \
                 /root/backup_watchcat_patch_* \
@@ -283,7 +318,6 @@ watchcat_service_recover() {
                 /root/backup_docker_* \
                 /root/backup_*_patch_* \
               ; do
-                # shellcheck disable=SC2046
                 ls -dt $pat 2>/dev/null | tail -n +$((keep + 1)) | while read -r p; do
                   logger -p daemon.warn -t "watchcat[$$]" "service_recover: disk_cleanup removing $p"
                   rm -rf "$p" 2>/dev/null || true
@@ -295,10 +329,9 @@ watchcat_service_recover() {
       fi
     fi
 
-    # ChirpStack stack check (containers)
+    # ChirpStack stack check (prefix + required components)
     if [ "$chirpstack_check" = "1" ]; then
       if command -v docker >/dev/null 2>&1; then
-        # Build running container name list under prefix
         running_names=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^${chirpstack_name_prefix}" || true)
 
         missing=""
@@ -316,15 +349,12 @@ watchcat_service_recover() {
         fi
 
         if [ "$ok" = "0" ]; then
-
-          # Try recover chirpstack stack (rate-limited)
           now_epoch=$(date +%s)
           last_try=$(cat "$chirp_recover_stamp" 2>/dev/null || echo 0)
           since=$((now_epoch - last_try))
           if [ "$since" -ge "$chirpstack_recover_cooldown" ] 2>/dev/null; then
             echo "$now_epoch" > "$chirp_recover_stamp" 2>/dev/null || true
 
-            # choose compose command
             if command -v docker-compose >/dev/null 2>&1; then
               CCMD="docker-compose"
             elif docker compose version >/dev/null 2>&1; then
@@ -334,7 +364,6 @@ watchcat_service_recover() {
             fi
 
             if [ "$chirpstack_recover" = "docker_restart_then_compose" ]; then
-              # Restart any non-running containers under prefix (best-effort)
               all_names=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^${chirpstack_name_prefix}" || true)
               for n in $all_names; do
                 st=$(docker inspect -f '{{.State.Status}}' "$n" 2>/dev/null || echo "missing")
@@ -343,7 +372,6 @@ watchcat_service_recover() {
                   docker restart "$n" >/dev/null 2>&1 || true
                 fi
               done
-              # Then reconcile using compose
               if [ -n "$CCMD" ] && [ -d "$chirpstack_compose_dir" ]; then
                 logger -p daemon.err -t "watchcat[$$]" "service_recover: chirpstack recover via compose up -d (dir=$chirpstack_compose_dir)"
                 ( cd "$chirpstack_compose_dir" && $CCMD up -d --remove-orphans ) >/dev/null 2>&1 || true
@@ -408,19 +436,15 @@ watchcat_service_recover() {
 # ---- LIVING_UNIVERSE PATCH END: service_recover ----
 EOF
 
-# Build new watchcat.sh: shebang + blank + patch + rest
 (head -n 1 "$TMP"; echo; cat "$PATCH"; tail -n +2 "$TMP") > /tmp/watchcat.sh.new
 
-# Insert service_recover case arm before default "*)"
-# We match a line that is exactly "*)" at line start.
 sed '/^\*)/i\
 service_recover)\
 \twatchcat_service_recover "$2" "$3" "$4" "$5" "$6" "$7" "${8}" "${9}" "${10}" "${11}" "${12}" "${13}"\
+
 \t;;\
 ' /tmp/watchcat.sh.new > /tmp/watchcat.sh.final
 
-# Remove any duplicate watchcat_service_recover() definitions that may still exist
-# Keep the first one (the injected block near the top) and drop subsequent ones up to their end marker.
 awk '
   /^watchcat_service_recover\(\)/ {
     seen++
@@ -434,12 +458,181 @@ awk '
 mv /tmp/watchcat.sh.final2 "$F"
 chmod 0755 "$F"
 
-# restart
+# --- 3) Patch LuCI UI to support service_recover (so UI reflects truth)
+# Target: /www/luci-static/resources/view/watchcat.js
+if [ -f /www/luci-static/resources/view/watchcat.js ]; then
+  cp -a /www/luci-static/resources/view/watchcat.js "$BK/luci_watchcat.js" 2>/dev/null || true
+  cat > /www/luci-static/resources/view/watchcat.js <<'LUCIFS'
+'use strict';
+
+'require view';
+'require form';
+'require tools.widgets as widgets';
+
+return view.extend({
+	render: function() {
+		var m, s, o;
+
+		m = new form.Map('watchcat', _('Watchcat'), _(
+			'Configure checks and actions to take when a host becomes unreachable or when local services become unhealthy.'
+		));
+
+		s = m.section(form.TypedSection, 'watchcat', _('Watchcat'), _(
+			'These rules govern how this device reacts to network/service events.'
+		));
+		s.anonymous = true;
+		s.addremove = true;
+		s.tab('general', _('General Settings'));
+
+		o = s.taboption('general', form.ListValue, 'mode', _('Mode'), _(
+			"Ping Reboot: Reboot this device if a ping to a specified host fails for a specified duration of time. <br />" +
+			"Periodic Reboot: Reboot this device after a specified interval of time. <br />" +
+			"Restart Interface: Restart a network interface if a ping to a specified host fails for a specified duration of time. <br />" +
+			"Service Recover: Monitor local services (e.g. Docker/ChirpStack) and attempt recovery before reboot."
+		));
+		o.value('ping_reboot', _('Ping Reboot'));
+		o.value('periodic_reboot', _('Periodic Reboot'));
+		o.value('restart_iface', _('Restart Interface'));
+		o.value('service_recover', _('Service Recover（服務恢復）'));
+
+		o = s.taboption('general', form.Value, 'period', _('Period'), _(
+			"In Periodic Reboot mode, it defines how often to reboot. <br />" +
+			"In Ping Reboot mode, it defines the longest period of time without a reply from the Host To Check before a reboot is engaged. <br />" +
+			"In Restart Interface mode, it defines the longest period of time without a reply from the Host to Check before the interface is restarted. <br />" +
+			"In Service Recover mode, it defines how long the system must stay unhealthy before reboot is allowed. <br /><br />" +
+			"The default unit is seconds (no suffix), but you can use m/h/d suffixes."
+		));
+		o.default = '6h';
+
+		/* Ping-based options */
+		o = s.taboption('general', form.Value, 'pinghosts', _('Host To Check'), _('IPv4 address or hostname to ping.'));
+		o.datatype = 'host(1)';
+		o.default = '8.8.8.8';
+		o.depends({ mode: 'ping_reboot' });
+		o.depends({ mode: 'restart_iface' });
+
+		o = s.taboption('general', form.Value, 'pingperiod', _('Check Interval'), _(
+			'How often to ping the host specified above. Use seconds or m/h/d suffixes.'
+		));
+		o.default = '30s';
+		o.depends({ mode: 'ping_reboot' });
+		o.depends({ mode: 'restart_iface' });
+
+		o = s.taboption('general', form.ListValue, 'pingsize', _('Ping Packet Size'));
+		o.value('small', _('Small: 1 byte'));
+		o.value('windows', _('Windows: 32 bytes'));
+		o.value('standard', _('Standard: 56 bytes'));
+		o.value('big', _('Big: 248 bytes'));
+		o.value('huge', _('Huge: 1492 bytes'));
+		o.value('jumbo', _('Jumbo: 9000 bytes'));
+		o.default = 'standard';
+		o.depends({ mode: 'ping_reboot' });
+		o.depends({ mode: 'restart_iface' });
+
+		o = s.taboption('general', form.Value, 'forcedelay', _('Force Reboot Delay'), _(
+			'Applies to Ping Reboot and Periodic Reboot modes. Enter seconds to trigger delayed hard reboot if soft reboot fails; 0 disables.'
+		));
+		o.default = '1m';
+		o.depends({ mode: 'ping_reboot' });
+		o.depends({ mode: 'periodic_reboot' });
+
+		o = s.taboption('general', widgets.DeviceSelect, 'interface', _('Interface'), _(
+			'Interface to monitor and/or restart.'
+		), _('<i>Applies to Ping Reboot and Restart Interface modes</i>'));
+		o.depends({ mode: 'ping_reboot' });
+		o.depends({ mode: 'restart_iface' });
+
+		o = s.taboption('general', widgets.NetworkSelect, 'mmifacename', _('Name of ModemManager Interface'), _(
+			'If using ModemManager, Watchcat can restart your ModemManager interface by specifying its name.'
+		));
+		o.depends({ mode: 'restart_iface' });
+		o.optional = true;
+
+		o = s.taboption('general', form.Flag, 'unlockbands', _('Unlock Modem Bands'), _(
+			'If using ModemManager, before restarting the interface, set the modem to be allowed to use any band.'
+		));
+		o.default = '0';
+		o.depends({ mode: 'restart_iface' });
+
+		/* Service Recover options */
+		o = s.taboption('general', form.Value, 'reboot_backoff', _('Reboot Backoff'), _(
+			'Minimum time between two reboots in Service Recover mode (rate-limit to avoid reboot loops).'
+		));
+		o.default = '1h';
+		o.depends({ mode: 'service_recover' });
+
+		o = s.taboption('general', form.Value, 'disk_path', _('Disk Path'), _('Disk path to check free space for (e.g. / or /opt).'));
+		o.default = '/';
+		o.depends({ mode: 'service_recover' });
+
+		o = s.taboption('general', form.Value, 'disk_min_kb', _('Minimum Free Disk (KB)'), _(
+			'If free space is below this threshold, service_recover marks the system unhealthy (no auto-clean in phase 1).'
+		));
+		o.datatype = 'uinteger';
+		o.default = '200000';
+		o.depends({ mode: 'service_recover' });
+
+		o = s.taboption('general', form.Flag, 'docker_check', _('Docker Health Check'), _(
+			'When enabled, service_recover checks `docker info` and restarts dockerd if unhealthy.'
+		));
+		o.default = '1';
+		o.depends({ mode: 'service_recover' });
+
+		o = s.taboption('general', form.Flag, 'chirpstack_check', _('ChirpStack Stack Check'), _(
+			'When enabled, service_recover checks ChirpStack containers and tries recovery.'
+		));
+		o.default = '1';
+		o.depends({ mode: 'service_recover' });
+
+		o = s.taboption('general', form.Value, 'chirpstack_name_prefix', _('ChirpStack Container Prefix'), _(
+			'Only containers whose names start with this prefix are considered part of the ChirpStack stack.'
+		));
+		o.default = 'chirpstack-docker_';
+		o.depends({ mode: 'service_recover' });
+
+		o = s.taboption('general', form.DynamicList, 'chirpstack_required', _('ChirpStack Required Components'), _(
+			'Keywords (substring match) that must appear in running container names under the prefix.'
+		));
+		o.depends({ mode: 'service_recover' });
+		o.optional = true;
+
+		o = s.taboption('general', form.Value, 'chirpstack_compose_dir', _('ChirpStack Compose Directory'), _(
+			'Directory containing the docker-compose.yml used to recover the stack.'
+		));
+		o.default = '/mnt/opensource-system/chirpstack-docker';
+		o.depends({ mode: 'service_recover' });
+
+		o = s.taboption('general', form.ListValue, 'chirpstack_recover', _('ChirpStack Recover Strategy'), _(
+			'Choose recovery strategy when ChirpStack stack is unhealthy.'
+		));
+		o.value('docker_restart_then_compose', _('Restart containers then Compose up'));
+		o.value('compose_up', _('Compose up only'));
+		o.default = 'docker_restart_then_compose';
+		o.depends({ mode: 'service_recover' });
+
+		o = s.taboption('general', form.Value, 'chirpstack_recover_cooldown', _('ChirpStack Recover Cooldown (seconds)'), _(
+			'Minimum seconds between two ChirpStack recover attempts.'
+		));
+		o.datatype = 'uinteger';
+		o.default = '300';
+		o.depends({ mode: 'service_recover' });
+
+		return m.render();
+	}
+});
+LUCIFS
+fi
+
+/etc/init.d/rpcd restart 2>/dev/null || true
+/etc/init.d/uhttpd restart 2>/dev/null || true
+/etc/init.d/nginx restart 2>/dev/null || true
+
 /etc/init.d/watchcat restart || /etc/init.d/watchcat start || true
 
-# show quick status
-ubus call service list "{\"name\":\"watchcat\"}" 2>/dev/null || true
+ubus call service list '{"name":"watchcat"}' 2>/dev/null || true
 ps w | grep -E "watchcat\.sh service_recover" | grep -v grep || true
 
-echo "OK applied patch_watchcat (service_recover)."
-SH
+echo "OK applied watchcat patch (service_recover)."
+REMOTE
+
+say "DONE"

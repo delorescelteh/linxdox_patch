@@ -485,7 +485,7 @@ return view.extend({
 			'設定當主機不可達或本機服務不健康時的檢查與動作（Configure checks and actions when a host is unreachable or local services are unhealthy）。'
 		));
 
-		s = m.section(form.TypedSection, 'watchcat', _('Watchcat（看門狗）'), _(
+		s = m.section(form.TypedSection, 'watchcat', _('規則（Rules）'), _(
 			'這些規則定義設備對網路/服務事件的反應方式（These rules govern how this device reacts to network/service events）。'
 		));
 		s.anonymous = true;

@@ -275,7 +275,19 @@ service_recover)\
 \t;;\
 ' /tmp/watchcat.sh.new > /tmp/watchcat.sh.final
 
-mv /tmp/watchcat.sh.final "$F"
+# Remove any duplicate watchcat_service_recover() definitions that may still exist
+# Keep the first one (the injected block near the top) and drop subsequent ones up to their end marker.
+awk '
+  /^watchcat_service_recover\(\)/ {
+    seen++
+    if (seen >= 2) { skip=1; next }
+  }
+  skip && /LIVING_UNIVERSE PATCH END: service_recover/ { skip=0; next }
+  skip { next }
+  { print }
+' /tmp/watchcat.sh.final > /tmp/watchcat.sh.final2
+
+mv /tmp/watchcat.sh.final2 "$F"
 chmod 0755 "$F"
 
 # restart

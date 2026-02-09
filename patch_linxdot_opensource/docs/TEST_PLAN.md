@@ -1,4 +1,4 @@
-# patch_docker_compose — Test Plan
+# patch_linxdot_opensource — Test Plan
 
 ## Pre-checks (before apply)
 - Record baseline evidence:
@@ -31,5 +31,5 @@
 - Simulate low disk (if safe) and ensure system does not brick; logs clearly show alert
 
 ## Evidence to collect
-- Save command outputs into `patch_docker_compose/evidence/<timestamp>/`
+- Save command outputs into `patch_linxdot_opensource/evidence/<timestamp>/`
 - Include “before vs after” diff of key configs.

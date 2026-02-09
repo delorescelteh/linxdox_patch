@@ -7,7 +7,7 @@ TARGET=${1:-}
 [ -n "$TARGET" ] || { echo "usage: $0 root@<ip>" >&2; exit 2; }
 
 TS=$(date +%Y%m%d_%H%M%S)
-OUTDIR="patch_docker_compose/baseline/${TARGET#*@}_$TS"
+OUTDIR="patch_linxdot_opensource/baseline/${TARGET#*@}_$TS"
 mkdir -p "$OUTDIR"
 
 run() {

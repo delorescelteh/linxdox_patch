@@ -23,8 +23,8 @@
 - [ ] Disk guardrails (data_root, rotation, prune policy)
 
 ## Implementation
-- [ ] apply script(s) under `patch_docker_compose/tools/`
-- [ ] verify script(s) under `patch_docker_compose/tools/`
+- [ ] apply script(s) under `patch_linxdot_opensource/tools/`
+- [ ] verify script(s) under `patch_linxdot_opensource/tools/`
 - [ ] rollback plan
 
 ## Verification (after)

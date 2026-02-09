@@ -1,15 +1,0 @@
-spawn ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 root@192.168.0.88 sh -lc {sed -n "1,140p" /etc/init.d/watchcat; echo; nl -ba /etc/init.d/watchcat | sed -n "45,90p"; echo; /etc/init.d/watchcat restart 2>&1 || true}
-root@192.168.0.88's password: 
-  _______                     ________        __
- |       |.-----.-----.-----.|  |  |  |.----.|  |_
- |   -   ||  _  |  -__|     ||  |  |  ||   _||   _|
- |_______||   __|_____|__|__||________||__|  |____|
-          |__| W I R E L E S S   F R E E D O M
- -----------------------------------------------------
- Linxdot 2.0.0.05-OPEN, A01
- -----------------------------------------------------
-
--n: line 1: {sed: not found
-ash: 
-nl: not found
-/etc/rc.common: eval: line 12: actual: not found

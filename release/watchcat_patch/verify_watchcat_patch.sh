@@ -15,6 +15,22 @@ TARGET=${1:-}
 $SSH_CMD $SSH_OPTS "$TARGET" 'sh -s' <<'REMOTE'
 set -eu
 
+echo '=== /etc/crontabs/root (legacy cron checks) ==='
+if [ -f /etc/crontabs/root ]; then
+  grep -E '/usr/bin/(log_backup|backup_etc|backup_pack|cleanup_old_backup|system_health_check|backup_docker_log|system_watchdog)\.sh|nginx-util.*check_ssl' /etc/crontabs/root || echo 'OK: no legacy cron lines found'
+else
+  echo 'no /etc/crontabs/root'
+fi
+
+echo
+
+echo '=== /usr/bin legacy scripts (should be absent) ==='
+for f in /usr/bin/log_backup.sh /usr/bin/backup_etc.sh /usr/bin/backup_pack.sh /usr/bin/cleanup_old_backup.sh /usr/bin/system_health_check.sh /usr/bin/backup_docker_log.sh /usr/bin/system_watchdog.sh; do
+  [ -e "$f" ] && echo "FOUND: $f" || true
+done
+
+echo
+
 echo '=== /etc/config/watchcat ==='
 cat /etc/config/watchcat || true
 

@@ -63,8 +63,38 @@ mkdir -p "$BK"
 cp -a /etc/config/watchcat "$BK/" 2>/dev/null || true
 cp -a /etc/init.d/watchcat "$BK/" 2>/dev/null || true
 cp -a /usr/bin/watchcat.sh "$BK/" 2>/dev/null || true
+cp -a /etc/crontabs/root "$BK/" 2>/dev/null || true
 
 echo "Backup: $BK"
+
+# --- Pre-clean: remove legacy cron jobs + scripts (customer-sync baseline)
+CRON=/etc/crontabs/root
+if [ -f "$CRON" ]; then
+  cp -a "$CRON" "$BK/crontab_root.before" 2>/dev/null || true
+
+  # remove known legacy jobs
+  awk '
+    $0 ~ /\/usr\/bin\/(log_backup|backup_etc|backup_pack|cleanup_old_backup|system_health_check|backup_docker_log|system_watchdog)\.sh/ { next }
+    $0 ~ /nginx-util\s+\x27check_ssl\x27/ { next }
+    { print }
+  ' "$CRON" > "$CRON.tmp" && mv "$CRON.tmp" "$CRON"
+
+  # best-effort reload cron
+  /etc/init.d/cron restart 2>/dev/null || /etc/init.d/crond restart 2>/dev/null || true
+fi
+
+# remove scripts (safe: only if file exists)
+for f in \
+  /usr/bin/log_backup.sh \
+  /usr/bin/backup_etc.sh \
+  /usr/bin/backup_pack.sh \
+  /usr/bin/cleanup_old_backup.sh \
+  /usr/bin/system_health_check.sh \
+  /usr/bin/backup_docker_log.sh \
+  /usr/bin/system_watchdog.sh \
+; do
+  [ -e "$f" ] && rm -f "$f" 2>/dev/null || true
+done
 
 # --- Defaults (can be overridden by exporting env vars before running ssh)
 PERIOD="${PERIOD:-1h}"

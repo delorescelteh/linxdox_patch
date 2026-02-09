@@ -524,100 +524,100 @@ return view.extend({
 		o.depends({ mode: 'ping_reboot' });
 		o.depends({ mode: 'restart_iface' });
 
-		o = s.taboption('general', form.ListValue, 'pingsize', _('Ping Packet Size'));
-		o.value('small', _('Small: 1 byte'));
-		o.value('windows', _('Windows: 32 bytes'));
-		o.value('standard', _('Standard: 56 bytes'));
-		o.value('big', _('Big: 248 bytes'));
-		o.value('huge', _('Huge: 1492 bytes'));
-		o.value('jumbo', _('Jumbo: 9000 bytes'));
+		o = s.taboption('general', form.ListValue, 'pingsize', _('Ping Packet Size（封包大小）'));
+		o.value('small', _('Small（小）：1 byte'));
+		o.value('windows', _('Windows（Windows）：32 bytes'));
+		o.value('standard', _('Standard（標準）：56 bytes'));
+		o.value('big', _('Big（大）：248 bytes'));
+		o.value('huge', _('Huge（超大）：1492 bytes'));
+		o.value('jumbo', _('Jumbo（巨量）：9000 bytes'));
 		o.default = 'standard';
 		o.depends({ mode: 'ping_reboot' });
 		o.depends({ mode: 'restart_iface' });
 
-		o = s.taboption('general', form.Value, 'forcedelay', _('Force Reboot Delay'), _(
-			'Applies to Ping Reboot and Periodic Reboot modes. Enter seconds to trigger delayed hard reboot if soft reboot fails; 0 disables.'
+		o = s.taboption('general', form.Value, 'forcedelay', _('Force Reboot Delay（強制重啟延遲）'), _(
+			'適用於 Ping Reboot / Periodic Reboot。輸入秒數：若 soft reboot 失敗，將延遲後觸發 hard reboot；0 表示停用。（Applies to Ping/Periodic reboot; delayed hard reboot if soft reboot fails; 0 disables.）'
 		));
 		o.default = '1m';
 		o.depends({ mode: 'ping_reboot' });
 		o.depends({ mode: 'periodic_reboot' });
 
-		o = s.taboption('general', widgets.DeviceSelect, 'interface', _('Interface'), _(
-			'Interface to monitor and/or restart.'
-		), _('<i>Applies to Ping Reboot and Restart Interface modes</i>'));
+		o = s.taboption('general', widgets.DeviceSelect, 'interface', _('Interface（介面）'), _(
+			'要監控/重啟的網路介面（Interface to monitor and/or restart）。'
+		), _('<i>適用於 Ping Reboot / Restart Interface（Applies to Ping/Re-start interface modes）</i>'));
 		o.depends({ mode: 'ping_reboot' });
 		o.depends({ mode: 'restart_iface' });
 
-		o = s.taboption('general', widgets.NetworkSelect, 'mmifacename', _('Name of ModemManager Interface'), _(
-			'If using ModemManager, Watchcat can restart your ModemManager interface by specifying its name.'
+		o = s.taboption('general', widgets.NetworkSelect, 'mmifacename', _('Name of ModemManager Interface（ModemManager 介面名稱）'), _(
+			'若使用 ModemManager，可填入介面名稱讓 Watchcat 重啟該介面。（If using ModemManager, specify its name to restart it.）'
 		));
 		o.depends({ mode: 'restart_iface' });
 		o.optional = true;
 
-		o = s.taboption('general', form.Flag, 'unlockbands', _('Unlock Modem Bands'), _(
-			'If using ModemManager, before restarting the interface, set the modem to be allowed to use any band.'
+		o = s.taboption('general', form.Flag, 'unlockbands', _('Unlock Modem Bands（解鎖頻段）'), _(
+			'若使用 ModemManager，重啟介面前先將 modem 設為允許使用任意頻段。（If using ModemManager, allow any band before restart.）'
 		));
 		o.default = '0';
 		o.depends({ mode: 'restart_iface' });
 
 		/* Service Recover options */
-		o = s.taboption('general', form.Value, 'reboot_backoff', _('Reboot Backoff'), _(
-			'Minimum time between two reboots in Service Recover mode (rate-limit to avoid reboot loops).'
+		o = s.taboption('general', form.Value, 'reboot_backoff', _('Reboot Backoff（重啟間隔）'), _(
+			'兩次 reboot 的最小間隔（避免 reboot loop）。（Minimum time between two reboots; rate-limit to avoid reboot loops.）'
 		));
 		o.default = '1h';
 		o.depends({ mode: 'service_recover' });
 
-		o = s.taboption('general', form.Value, 'disk_path', _('Disk Path'), _('Disk path to check free space for (e.g. / or /opt).'));
+		o = s.taboption('general', form.Value, 'disk_path', _('Disk Path（磁碟路徑）'), _('要檢查剩餘空間的路徑（例如 / 或 /opt）。（Disk path to check free space for, e.g. / or /opt.）'));
 		o.default = '/';
 		o.depends({ mode: 'service_recover' });
 
-		o = s.taboption('general', form.Value, 'disk_min_kb', _('Minimum Free Disk (KB)'), _(
-			'If free space is below this threshold, service_recover marks the system unhealthy (no auto-clean in phase 1).'
+		o = s.taboption('general', form.Value, 'disk_min_kb', _('Minimum Free Disk (KB)（最小剩餘 KB）'), _(
+			'若剩餘空間低於此門檻，會視為 unhealthy 並記錄告警。（If below threshold, system is marked unhealthy and logs warning.）'
 		));
 		o.datatype = 'uinteger';
 		o.default = '200000';
 		o.depends({ mode: 'service_recover' });
 
-		o = s.taboption('general', form.Flag, 'docker_check', _('Docker Health Check'), _(
-			'When enabled, service_recover checks `docker info` and restarts dockerd if unhealthy.'
+		o = s.taboption('general', form.Flag, 'docker_check', _('Docker Health Check（Docker 健康檢查）'), _(
+			'啟用後會檢查 `docker info`，不健康時嘗試重啟 dockerd。（When enabled, checks `docker info` and restarts dockerd if unhealthy.）'
 		));
 		o.default = '1';
 		o.depends({ mode: 'service_recover' });
 
-		o = s.taboption('general', form.Flag, 'chirpstack_check', _('ChirpStack Stack Check'), _(
-			'When enabled, service_recover checks ChirpStack containers and tries recovery.'
+		o = s.taboption('general', form.Flag, 'chirpstack_check', _('ChirpStack Stack Check（ChirpStack 檢查）'), _(
+			'啟用後會檢查 ChirpStack 容器並嘗試自動修復。（When enabled, checks ChirpStack containers and tries recovery.）'
 		));
 		o.default = '1';
 		o.depends({ mode: 'service_recover' });
 
-		o = s.taboption('general', form.Value, 'chirpstack_name_prefix', _('ChirpStack Container Prefix'), _(
-			'Only containers whose names start with this prefix are considered part of the ChirpStack stack.'
+		o = s.taboption('general', form.Value, 'chirpstack_name_prefix', _('ChirpStack Container Prefix（容器前綴）'), _(
+			'只有容器名稱以此開頭，才視為 ChirpStack stack 的一部分。（Only containers whose names start with this prefix are considered part of the stack.）'
 		));
 		o.default = 'chirpstack-docker_';
 		o.depends({ mode: 'service_recover' });
 
-		o = s.taboption('general', form.DynamicList, 'chirpstack_required', _('ChirpStack Required Components'), _(
-			'Keywords (substring match) that must appear in running container names under the prefix.'
+		o = s.taboption('general', form.DynamicList, 'chirpstack_required', _('ChirpStack Required Components（必要元件）'), _(
+			'關鍵字（子字串匹配）：必須出現在 prefix 範圍內且正在 running 的容器名稱中。（Substring keywords that must appear in running container names under the prefix.）'
 		));
 		o.depends({ mode: 'service_recover' });
 		o.optional = true;
 
-		o = s.taboption('general', form.Value, 'chirpstack_compose_dir', _('ChirpStack Compose Directory'), _(
-			'Directory containing the docker-compose.yml used to recover the stack.'
+		o = s.taboption('general', form.Value, 'chirpstack_compose_dir', _('ChirpStack Compose Directory（Compose 目錄）'), _(
+			'包含 docker-compose.yml 的目錄，用於 stack recovery。（Directory containing docker-compose.yml used to recover the stack.）'
 		));
 		o.default = '/mnt/opensource-system/chirpstack-docker';
 		o.depends({ mode: 'service_recover' });
 
-		o = s.taboption('general', form.ListValue, 'chirpstack_recover', _('ChirpStack Recover Strategy'), _(
-			'Choose recovery strategy when ChirpStack stack is unhealthy.'
+		o = s.taboption('general', form.ListValue, 'chirpstack_recover', _('ChirpStack Recover Strategy（修復策略）'), _(
+			'當 ChirpStack stack 不健康時要採取的修復策略。（Recovery strategy when stack is unhealthy.）'
 		));
-		o.value('docker_restart_then_compose', _('Restart containers then Compose up'));
-		o.value('compose_up', _('Compose up only'));
+		o.value('docker_restart_then_compose', _('Restart containers then Compose up（先重啟容器，再 Compose up）'));
+		o.value('compose_up', _('Compose up only（只做 Compose up）'));
 		o.default = 'docker_restart_then_compose';
 		o.depends({ mode: 'service_recover' });
 
-		o = s.taboption('general', form.Value, 'chirpstack_recover_cooldown', _('ChirpStack Recover Cooldown (seconds)'), _(
-			'Minimum seconds between two ChirpStack recover attempts.'
+		o = s.taboption('general', form.Value, 'chirpstack_recover_cooldown', _('ChirpStack Recover Cooldown (seconds)（修復冷卻秒數）'), _(
+			'兩次 ChirpStack 修復嘗試的最小間隔秒數。（Minimum seconds between two recover attempts.）'
 		));
 		o.datatype = 'uinteger';
 		o.default = '300';

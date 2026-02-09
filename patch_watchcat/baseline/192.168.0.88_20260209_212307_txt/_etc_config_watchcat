@@ -1,0 +1,6 @@
+
+config watchcat
+	option mode 'ping_reboot'
+	option pinghosts '8.8.8.8'
+	option forcedelay '30'
+	option period '1h'

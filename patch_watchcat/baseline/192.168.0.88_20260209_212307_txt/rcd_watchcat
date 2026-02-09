@@ -1,0 +1,2 @@
+lrwxrwxrwx    1 root     root            18 Dec 23  2024 K01watchcat -> ../init.d/watchcat
+lrwxrwxrwx    1 root     root            18 Dec 23  2024 S97watchcat -> ../init.d/watchcat

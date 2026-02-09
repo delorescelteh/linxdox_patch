@@ -285,6 +285,8 @@ watchcat_service_recover() {
               ; do
                 # shellcheck disable=SC2046
                 ls -dt $pat 2>/dev/null | tail -n +$((keep + 1)) | while read -r p; do
+                  ts=$(date -Iseconds 2>/dev/null || date)
+                  echo "$ts removing $p" >> /tmp/watchcat_disk_cleanup_last.txt 2>/dev/null || true
                   logger -p daemon.warn -t "watchcat[$$]" "service_recover: disk_cleanup removing $p"
                   rm -rf "$p" 2>/dev/null || true
                 done

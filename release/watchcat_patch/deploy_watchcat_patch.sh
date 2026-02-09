@@ -319,6 +319,8 @@ watchcat_service_recover() {
                 /root/backup_*_patch_* \
               ; do
                 ls -dt $pat 2>/dev/null | tail -n +$((keep + 1)) | while read -r p; do
+                  ts=$(date -Iseconds 2>/dev/null || date)
+                  echo "$ts removing $p" >> /tmp/watchcat_disk_cleanup_last.txt 2>/dev/null || true
                   logger -p daemon.warn -t "watchcat[$$]" "service_recover: disk_cleanup removing $p"
                   rm -rf "$p" 2>/dev/null || true
                 done
@@ -565,6 +567,19 @@ return view.extend({
 			'兩次 reboot 的最小間隔（避免 reboot loop）。（Minimum time between two reboots; rate-limit to avoid reboot loops.）'
 		));
 		o.default = '1h';
+		o.depends({ mode: 'service_recover' });
+
+		o = s.taboption('general', form.Flag, 'disk_cleanup_enable', _('Disk Cleanup Enable（啟用磁碟清理）'), _(
+			'僅在磁碟低於門檻時，保守清理 /root 下的「patch 產生備份」舊檔（不碰 Docker volumes）。清理紀錄見系統日誌或 /tmp/watchcat_disk_cleanup_last.txt。'
+		));
+		o.default = '1';
+		o.depends({ mode: 'service_recover' });
+
+		o = s.taboption('general', form.Value, 'disk_cleanup_keep', _('Disk Cleanup Keep（保留份數）'), _(
+			'每一類備份保留最近 N 份，其餘刪除（Keep last N backups per category）。'
+		));
+		o.datatype = 'uinteger';
+		o.default = '3';
 		o.depends({ mode: 'service_recover' });
 
 		o = s.taboption('general', form.Value, 'disk_path', _('Disk Path（磁碟路徑）'), _('要檢查剩餘空間的路徑（例如 / 或 /opt）。（Disk path to check free space for, e.g. / or /opt.）'));

@@ -5,7 +5,10 @@ set -eu
 TARGET=${1:-}
 [ -n "$TARGET" ] || { echo "usage: $0 root@<ip>" >&2; exit 2; }
 
-ssh "$TARGET" 'sh -s' <<'SH'
+SSH_CMD=${SSH_CMD:-ssh}
+SSH_OPTS=${SSH_OPTS:-}
+
+$SSH_CMD $SSH_OPTS "$TARGET" 'sh -s' <<'SH'
 set -eu
 
 echo '=== UCI /etc/config/watchcat ==='

@@ -3,14 +3,15 @@
 # Target: OpenWrt/Linxdot baseline (tested on 2.0.0.05-OPEN)
 #
 # Usage:
-#   patch_time_stack.sh --ntp-server <host> [--ntp-server <host> ...]
+#   patch_time_stack.sh --ntp-server <host> [--ntp-server <host> ...] [--hide-ntpc-ui]
 #
 # Example:
-#   ./patch_time_stack.sh --ntp-server 192.168.0.1 --ntp-server 192.168.0.2
+#   ./patch_time_stack.sh --ntp-server 192.168.0.1 --ntp-server 192.168.0.2 --hide-ntpc-ui
 #
 set -eu
 
 SERVERS=""
+HIDE_NTPC_UI=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -19,8 +20,12 @@ while [ $# -gt 0 ]; do
       SERVERS="$SERVERS $2"
       shift 2
       ;;
+    --hide-ntpc-ui)
+      HIDE_NTPC_UI=1
+      shift 1
+      ;;
     -h|--help)
-      sed -n '1,80p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '1,90p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -112,6 +117,20 @@ fi
 if [ -x /etc/init.d/chronyd ]; then
   /etc/init.d/chronyd enable || true
   /etc/init.d/chronyd restart || /etc/init.d/chronyd start || true
+fi
+
+# --- 5) LuCI de-confuse: hide ntpc page/menu entry (optional)
+# On baseline we verified this file exists:
+#   /usr/share/luci/menu.d/luci-app-ntpc.json
+# Hiding it removes the second NTP-setting place in the UI.
+if [ "$HIDE_NTPC_UI" = "1" ]; then
+  if [ -f /usr/share/luci/menu.d/luci-app-ntpc.json ]; then
+    mv /usr/share/luci/menu.d/luci-app-ntpc.json "$BKDIR/luci-app-ntpc.json" || true
+    # Best-effort reload (varies by image)
+    /etc/init.d/rpcd restart 2>/dev/null || true
+    /etc/init.d/uhttpd restart 2>/dev/null || true
+    /etc/init.d/nginx restart 2>/dev/null || true
+  fi
 fi
 
 echo "OK: patched time stack to chrony-only"

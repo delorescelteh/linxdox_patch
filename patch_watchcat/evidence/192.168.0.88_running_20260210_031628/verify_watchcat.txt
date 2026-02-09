@@ -1,0 +1,52 @@
+spawn sh -lc /Users/delorescelteh/.openclaw/workspace/linxdox_patch/patch_watchcat/tools/verify_watchcat.sh root@192.168.0.88
+root@192.168.0.88's password: 
+=== UCI /etc/config/watchcat ===
+
+config watchcat
+	option pinghosts '8.8.8.8'
+	option forcedelay '30'
+	option period '1h'
+	option mode 'service_recover'
+	option reboot_backoff '1h'
+	option disk_path '/'
+	option disk_min_kb '200000'
+	option docker_check '1'
+
+
+=== rc.d enablement ===
+lrwxrwxrwx    1 root     root            18 Dec 23  2024 K01watchcat -> ../init.d/watchcat
+lrwxrwxrwx    1 root     root            18 Dec 23  2024 S97watchcat -> ../init.d/watchcat
+
+=== init.d watchcat contains service_recover? ===
+45:	# New options for service_recover
+57:	if [ "$mode" != "periodic_reboot" ] && [ "$mode" != "ping_reboot" ] && [ "$mode" != "restart_iface" ] && [ "$mode" != "service_recover" ]; then
+58:		append_string "error" "mode must be 'periodic_reboot' or 'ping_reboot' or 'restart_iface' or 'service_recover'" "; "
+116:	service_recover)
+118:		procd_set_param command /usr/bin/watchcat.sh "service_recover" "$period" "$(time_to_seconds "$reboot_backoff")" "$disk_path" "$disk_min_kb" "$docker_check"
+
+=== watchcat.sh contains service_recover? ===
+13:watchcat_service_recover() {
+37:          logger -p daemon.err -t "watchcat[$$]" "service_recover: disk_low(${disk_path} free_kb=${free_kb} < ${disk_min_kb})"
+47:          logger -p daemon.err -t "watchcat[$$]" "service_recover: docker_unhealthy -> restarting dockerd"
+52:        logger -p daemon.err -t "watchcat[$$]" "service_recover: docker_cli_missing"
+76:        logger -p daemon.err -t "watchcat[$$]" "service_recover: fail_dur=${fail_dur}s >= ${failure_period}s; rebooting (backoff=${reboot_backoff}s)"
+81:        logger -p daemon.warn -t "watchcat[$$]" "service_recover: reboot suppressed by backoff (since_reboot=${since_reboot}s < ${reboot_backoff}s)"
+86:# ---- LIVING_UNIVERSE PATCH END: service_recover ----
+305:service_recover)
+306:	watchcat_service_recover "$2" "$3" "$4" "$5" "$6"
+313:# ---- LIVING_UNIVERSE PATCH BEGIN: service_recover ----
+324:watchcat_service_recover() {
+348:          logger -p daemon.err -t "watchcat[$$]" "service_recover: disk_low(${disk_path} free_kb=${free_kb} < ${disk_min_kb})"
+358:          logger -p daemon.err -t "watchcat[$$]" "service_recover: docker_unhealthy -> restarting dockerd"
+363:        logger -p daemon.err -t "watchcat[$$]" "service_recover: docker_cli_missing"
+387:        logger -p daemon.err -t "watchcat[$$]" "service_recover: fail_dur=${fail_dur}s >= ${failure_period}s; rebooting (backoff=${reboot_backoff}s)"
+392:        logger -p daemon.warn -t "watchcat[$$]" "service_recover: reboot suppressed by backoff (since_reboot=${since_reboot}s < ${reboot_backoff}s)"
+397:# ---- LIVING_UNIVERSE PATCH END: service_recover ----
+
+=== running watchcat process ===
+ 8024 root      1324 S    /bin/sh /usr/bin/watchcat.sh service_recover 3600 3600 / 200000 1
+
+=== recent watchcat logs ===
+Mon Feb  9 13:56:17 2026 user.err watchcat: reboot program cfg01e014 not started - mode must be 'periodic_reboot' or 'ping_reboot' or 'restart_iface'
+Mon Feb  9 14:07:20 2026 user.err watchcat: reboot program cfg01e014 not started - mode must be 'periodic_reboot' or 'ping_reboot' or 'restart_iface'
+Mon Feb  9 19:15:36 2026 daemon.info procd: Instance watchcat::watchcat_cfg01e014 s in a crash loop 6 crashes, 0 seconds since last crash

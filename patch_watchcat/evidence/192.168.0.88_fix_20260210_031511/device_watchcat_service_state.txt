@@ -1,17 +1,0 @@
-spawn ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 root@192.168.0.88 sh -lc 'set -e
-/etc/init.d/watchcat restart 2>&1 || true
-ps w | grep -i watchcat | grep -v grep || true
-logread 2>/dev/null | grep -i watchcat | tail -n 80 || true
-'
-root@192.168.0.88's password: 
-  _______                     ________        __
- |       |.-----.-----.-----.|  |  |  |.----.|  |_
- |   -   ||  _  |  -__|     ||  |  |  ||   _||   _|
- |_______||   __|_____|__|__||________||__|  |____|
-          |__| W I R E L E S S   F R E E D O M
- -----------------------------------------------------
- Linxdot 2.0.0.05-OPEN, A01
- -----------------------------------------------------
- 7820 root      1412 R    /bin/sh /etc/rc.common /etc/init.d/watchcat running
-Mon Feb  9 13:56:17 2026 user.err watchcat: reboot program cfg01e014 not started - mode must be 'periodic_reboot' or 'ping_reboot' or 'restart_iface'
-Mon Feb  9 14:07:20 2026 user.err watchcat: reboot program cfg01e014 not started - mode must be 'periodic_reboot' or 'ping_reboot' or 'restart_iface'

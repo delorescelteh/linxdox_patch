@@ -1,16 +1,16 @@
 #!/bin/sh
 # Apply patch_watchcat (service_recover mode) to target device.
+# This patches the existing watchcat implementation:
+# - /usr/bin/watchcat.sh (adds service_recover mode)
+# - /etc/init.d/watchcat (allows mode + passes args)
+# - /etc/config/watchcat (sets recommended defaults)
 #
-# Design goals:
-# - Patch the existing watchcat (UCI + init.d + /usr/bin/watchcat.sh)
-# - NO external ping dependency
-# - service_recover mode checks (phase-1): disk space + docker health
-# - Reboot only after failure_period, and rate-limited by reboot_backoff (default 1h)
-#
-# BusyBox-safe: uses sh + sed + grep + head/tail + cp/mv.
+# NOTE: This script uses only POSIX sh + awk (no sed -i tricks), for BusyBox compatibility.
 #
 # Usage:
-#   ./apply_watchcat.sh root@<ip>
+#   apply_watchcat.sh root@<ip>
+# Example:
+#   ./apply_watchcat.sh root@192.168.0.88
 
 set -eu
 TARGET=${1:-}
@@ -18,7 +18,6 @@ TARGET=${1:-}
 
 ssh "$TARGET" 'sh -s' <<'SH'
 set -eu
-
 TS=$(date +%Y%m%d_%H%M%S)
 BK=/root/backup_watchcat_patch_$TS
 mkdir -p "$BK"
@@ -29,169 +28,21 @@ cp -a /usr/bin/watchcat.sh "$BK/" 2>/dev/null || true
 
 echo "Backup: $BK"
 
-# --- 0) Ensure UCI has our recommended defaults
-uci -q set watchcat.@watchcat[0].mode='service_recover' || true
-uci -q set watchcat.@watchcat[0].period='1h' || true
-uci -q set watchcat.@watchcat[0].reboot_backoff='1h' || true
-uci -q set watchcat.@watchcat[0].disk_path='/' || true
-uci -q set watchcat.@watchcat[0].disk_min_kb='200000' || true
-uci -q set watchcat.@watchcat[0].docker_check='1' || true
-uci -q commit watchcat || true
+# --- 1) /usr/bin/watchcat.sh: append implementation block (idempotent)
+if ! grep -q "LIVING_UNIVERSE PATCH BEGIN: service_recover" /usr/bin/watchcat.sh; then
+  cat >> /usr/bin/watchcat.sh <<'EOF'
 
-# --- 1) Patch /etc/init.d/watchcat deterministically (rewrite from known-good template embedded here)
-cat > /etc/init.d/watchcat <<'INIT'
-#!/bin/sh /etc/rc.common
-
-USE_PROCD=1
-
-START=97
-STOP=01
-
-append_string() {
-	varname="$1"
-	add="$2"
-	separator="${3:- }"
-	local actual
-	eval "actual=\$$varname"
-
-	new="${actual:+$actual$separator}$add"
-	eval "$varname=\$new"
-}
-
-time_to_seconds() {
-	time=$1
-
-	{ [ "$time" -ge 1 ] 2> /dev/null && seconds="$time"; } ||
-		{ [ "${time%s}" -ge 1 ] 2> /dev/null && seconds="${time%s}"; } ||
-		{ [ "${time%m}" -ge 1 ] 2> /dev/null && seconds=$((${time%m} * 60)); } ||
-		{ [ "${time%h}" -ge 1 ] 2> /dev/null && seconds=$((${time%h} * 3600)); } ||
-		{ [ "${time%d}" -ge 1 ] 2> /dev/null && seconds=$((${time%d} * 86400)); }
-
-	echo $seconds
-	unset seconds
-	unset time
-}
-
-config_watchcat() {
-	# Read config
-	config_get period "$1" period "120"
-	config_get mode "$1" mode "ping_reboot"
-	config_get pinghosts "$1" pinghosts "8.8.8.8"
-	config_get pingperiod "$1" pingperiod "60"
-	config_get forcedelay "$1" forcedelay "60"
-	config_get pingsize "$1" pingsize "standard"
-	config_get interface "$1" interface
-	config_get mmifacename "$1" mmifacename
-	config_get_bool unlockbands "$1" unlockbands "0"
-
-	# New options for service_recover
-	config_get reboot_backoff "$1" reboot_backoff "1h"
-	config_get disk_path "$1" disk_path "/"
-	config_get disk_min_kb "$1" disk_min_kb "200000"
-	config_get docker_check "$1" docker_check "1"
-
-	# Fix potential typo in mode and provide backward compatibility.
-	[ "$mode" = "allways" ] && mode="periodic_reboot"
-	[ "$mode" = "always" ] && mode="periodic_reboot"
-	[ "$mode" = "ping" ] && mode="ping_reboot"
-
-	# Checks for settings common to all operation modes
-	if [ "$mode" != "periodic_reboot" ] && [ "$mode" != "ping_reboot" ] && [ "$mode" != "restart_iface" ] && [ "$mode" != "service_recover" ]; then
-		append_string "error" "mode must be 'periodic_reboot' or 'ping_reboot' or 'restart_iface' or 'service_recover'" "; "
-	fi
-
-	period="$(time_to_seconds "$period")"
-	[ "$period" -ge 1 ] ||
-		append_string "error" "period has invalid format. Use time value(ex: '30'; '4m'; '6h'; '2d')" "; "
-
-	# ping_reboot mode and restart_iface mode specific checks
-	if [ "$mode" = "ping_reboot" ] || [ "$mode" = "restart_iface" ]; then
-		if [ -z "$error" ]; then
-			pingperiod_default="$((period / 5))"
-			pingperiod="$(time_to_seconds "$pingperiod")"
-
-			if [ "$pingperiod" -ge 0 ] && [ "$pingperiod" -ge "$period" ]; then
-				pingperiod="$(time_to_seconds "$pingperiod_default")"
-				append_string "warn" "pingperiod cannot be greater than $period. Defaulted to $pingperiod_default seconds (1/5 of period)" "; "
-			fi
-
-			if [ "$pingperiod" -lt 0 ]; then
-				append_string "warn" "pingperiod cannot be a negative value." "; "
-			fi
-
-			if [ "$mmifacename" != "" ] && [ "$period" -lt 30 ]; then
-				append_string "error" "Check interval is less than 30s. For robust operation with ModemManager modem interfaces it is recommended to set the period to at least 30s."
-			fi
-		fi
-	fi
-
-	# ping_reboot mode and periodic_reboot mode specific checks
-	if [ "$mode" = "ping_reboot" ] || [ "$mode" = "periodic_reboot" ]; then
-		forcedelay="$(time_to_seconds "$forcedelay")"
-	fi
-
-	[ -n "$warn" ] && logger -p user.warn -t "watchcat" "$1: $warn"
-	[ -n "$error" ] && {
-		logger -p user.err -t "watchcat" "reboot program $1 not started - $error"
-		return
-	}
-
-	case "$mode" in
-	periodic_reboot)
-		procd_open_instance "watchcat_${1}"
-		procd_set_param command /usr/bin/watchcat.sh "periodic_reboot" "$period" "$forcedelay"
-		procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
-		procd_close_instance
-		;;
-	ping_reboot)
-		procd_open_instance "watchcat_${1}"
-		procd_set_param command /usr/bin/watchcat.sh "ping_reboot" "$period" "$forcedelay" "$pinghosts" "$pingperiod" "$pingsize"
-		procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
-		procd_close_instance
-		;;
-	restart_iface)
-		procd_open_instance "watchcat_${1}"
-		procd_set_param command /usr/bin/watchcat.sh "restart_iface" "$period" "$pinghosts" "$pingperiod" "$pingsize" "$interface" "$mmifacename"
-		procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
-		procd_close_instance
-		;;
-	service_recover)
-		procd_open_instance "watchcat_${1}"
-		procd_set_param command /usr/bin/watchcat.sh "service_recover" "$period" "$(time_to_seconds "$reboot_backoff")" "$disk_path" "$disk_min_kb" "$docker_check"
-		procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
-		procd_close_instance
-		;;
-	*)
-		echo "Error starting Watchcat service. Invalid mode selection: $mode"
-		;;
-	esac
-}
-
-start_service() {
-	config_load watchcat
-	config_foreach config_watchcat watchcat
-}
-
-service_triggers() {
-	procd_add_reload_trigger "watchcat"
-}
-INIT
-chmod 0755 /etc/init.d/watchcat
-
-# --- 2) Patch /usr/bin/watchcat.sh deterministically
-F=/usr/bin/watchcat.sh
-TMP=/tmp/watchcat.sh.clean
-
-# Remove any previously inserted patch blocks and the service_recover case arm (if any)
-# (We'll re-add exactly one block and one case arm.)
-sed -e '/LIVING_UNIVERSE PATCH BEGIN: service_recover/,/LIVING_UNIVERSE PATCH END: service_recover/d' \
-    -e '/^service_recover)/,/^\t;;$/d' \
-    "$F" > "$TMP"
-
-# Append patch block AFTER shebang, BEFORE any case execution
-PATCH=/tmp/watchcat_service_recover.block
-cat > "$PATCH" <<'EOF'
 # ---- LIVING_UNIVERSE PATCH BEGIN: service_recover ----
+time_to_seconds_lu() {
+  t=$1
+  { [ "$t" -ge 1 ] 2>/dev/null && echo "$t" && return; } || true
+  { [ "${t%s}" -ge 1 ] 2>/dev/null && echo "${t%s}" && return; } || true
+  { [ "${t%m}" -ge 1 ] 2>/dev/null && echo $((${t%m} * 60)) && return; } || true
+  { [ "${t%h}" -ge 1 ] 2>/dev/null && echo $((${t%h} * 3600)) && return; } || true
+  { [ "${t%d}" -ge 1 ] 2>/dev/null && echo $((${t%d} * 86400)) && return; } || true
+  echo "-1"
+}
+
 watchcat_service_recover() {
   failure_period="$1"
   reboot_backoff="$2"
@@ -210,6 +61,7 @@ watchcat_service_recover() {
 
     ok=1
 
+    # Disk check
     if [ -n "$disk_path" ]; then
       free_kb=$(df -k "$disk_path" 2>/dev/null | awk 'NR==2{print $4}')
       if [ -n "$free_kb" ] && [ "$free_kb" -ge 0 ] 2>/dev/null; then
@@ -220,6 +72,7 @@ watchcat_service_recover() {
       fi
     fi
 
+    # Docker check
     if [ "$docker_check" = "1" ]; then
       if command -v docker >/dev/null 2>&1; then
         docker info >/dev/null 2>&1 || {
@@ -233,11 +86,13 @@ watchcat_service_recover() {
       fi
     fi
 
+    # Mark last ok
     if [ "$ok" = "1" ]; then
       echo "$(date +%s)" > "$last_ok_file" 2>/dev/null || true
       continue
     fi
 
+    # Decide reboot if failures persist past failure_period and obey backoff
     last_ok=$(cat "$last_ok_file" 2>/dev/null || echo 0)
     now_epoch=$(date +%s)
 
@@ -263,27 +118,88 @@ watchcat_service_recover() {
 }
 # ---- LIVING_UNIVERSE PATCH END: service_recover ----
 EOF
+fi
 
-# Build new watchcat.sh: shebang + blank + patch + rest
-(head -n 1 "$TMP"; echo; cat "$PATCH"; tail -n +2 "$TMP") > /tmp/watchcat.sh.new
+# --- 2) /usr/bin/watchcat.sh: add case arm (rewrite safely)
+if ! grep -q "^service_recover)" /usr/bin/watchcat.sh; then
+  awk '
+    /^\*\)/ && !done {
+      print "service_recover)";
+      print "\twatchcat_service_recover \"$2\" \"$3\" \"$4\" \"$5\" \"$6\"";
+      print "\t;;";
+      done=1
+    }
+    { print }
+  ' /usr/bin/watchcat.sh > /tmp/watchcat.sh.new
+  mv /tmp/watchcat.sh.new /usr/bin/watchcat.sh
+  chmod 0755 /usr/bin/watchcat.sh
+fi
 
-# Insert service_recover case arm before default "*)"
-# We match a line that is exactly "*)" at line start.
-sed '/^\*)/i\
-service_recover)\
-\twatchcat_service_recover "$2" "$3" "$4" "$5" "$6"\
-\t;;\
-' /tmp/watchcat.sh.new > /tmp/watchcat.sh.final
+# --- 3) /etc/init.d/watchcat: add UCI reads for new options
+if ! grep -q "config_get reboot_backoff" /etc/init.d/watchcat; then
+  awk '
+    /config_get_bool unlockbands/ {
+      print;
+      print "\tconfig_get reboot_backoff \"$1\" reboot_backoff \"1h\"";
+      print "\tconfig_get disk_path \"$1\" disk_path \"/\"";
+      print "\tconfig_get disk_min_kb \"$1\" disk_min_kb \"200000\"";
+      print "\tconfig_get docker_check \"$1\" docker_check \"1\"";
+      next
+    }
+    { print }
+  ' /etc/init.d/watchcat > /tmp/watchcat.init.new
+  mv /tmp/watchcat.init.new /etc/init.d/watchcat
+fi
 
-mv /tmp/watchcat.sh.final "$F"
-chmod 0755 "$F"
+# --- 4) /etc/init.d/watchcat: allow mode + add case arm
+if ! grep -q "service_recover" /etc/init.d/watchcat; then
+  # broaden error message
+  awk '
+    { gsub(/periodic_reboot\x27 or \x27ping_reboot\x27 or \x27restart_iface\x27/, "periodic_reboot\x27 or \x27ping_reboot\x27 or \x27restart_iface\x27 or \x27service_recover\x27"); print }
+  ' /etc/init.d/watchcat > /tmp/watchcat.init.new
+  mv /tmp/watchcat.init.new /etc/init.d/watchcat
+fi
 
-# restart
+# relax validation check by adding service_recover
+if ! grep -q 'mode\" != \"service_recover' /etc/init.d/watchcat; then
+  awk '
+    /\$mode\x22 != \x22restart_iface\x22/ && !done {
+      sub(/\$mode\x22 != \x22restart_iface\x22 \]/, "\$mode\x22 != \x22restart_iface\x22 ] && [ \$mode\x22 != \x22service_recover\x22 ]");
+      done=1
+    }
+    { print }
+  ' /etc/init.d/watchcat > /tmp/watchcat.init.new
+  mv /tmp/watchcat.init.new /etc/init.d/watchcat
+fi
+
+if ! grep -q "\tservice_recover)" /etc/init.d/watchcat; then
+  awk '
+    /^\trestart_iface\)/ && !done {
+      print "\tservice_recover)";
+      print "\t\tprocd_open_instance \"watchcat_" $1 "\"";
+      print "\t\tprocd_set_param command /usr/bin/watchcat.sh \"service_recover\" \"$period\" \"$(time_to_seconds \"$reboot_backoff\")\" \"$disk_path\" \"$disk_min_kb\" \"$docker_check\"";
+      print "\t\tprocd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}";
+      print "\t\tprocd_close_instance";
+      print "\t\t;;";
+      done=1
+    }
+    { print }
+  ' /etc/init.d/watchcat > /tmp/watchcat.init.new
+  mv /tmp/watchcat.init.new /etc/init.d/watchcat
+fi
+
+chmod 0755 /etc/init.d/watchcat
+
+# --- 5) UCI defaults (phase-1)
+uci -q set watchcat.@watchcat[0].mode='service_recover' || true
+uci -q set watchcat.@watchcat[0].period='1h' || true
+uci -q set watchcat.@watchcat[0].reboot_backoff='1h' || true
+uci -q set watchcat.@watchcat[0].disk_path='/' || true
+uci -q set watchcat.@watchcat[0].disk_min_kb='200000' || true
+uci -q set watchcat.@watchcat[0].docker_check='1' || true
+uci -q commit watchcat || true
+
 /etc/init.d/watchcat restart || /etc/init.d/watchcat start || true
-
-# show quick status
-ubus call service list "{\"name\":\"watchcat\"}" 2>/dev/null || true
-ps w | grep -E "watchcat\.sh service_recover" | grep -v grep || true
 
 echo "OK applied patch_watchcat (service_recover)."
 SH

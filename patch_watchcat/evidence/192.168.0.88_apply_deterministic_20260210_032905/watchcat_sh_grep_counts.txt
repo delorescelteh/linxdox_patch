@@ -1,11 +1,0 @@
-spawn ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 root@192.168.0.88 sh -lc 'grep -n "LIVING_UNIVERSE PATCH BEGIN: service_recover" /usr/bin/watchcat.sh || true; echo "count_begin=$(grep -c \"PATCH BEGIN: service_recover\" /usr/bin/watchcat.sh || true)"; echo "count_func=$(grep -c \"^watchcat_service_recover()\" /usr/bin/watchcat.sh || true)"'
-root@192.168.0.88's password: 
-  _______                     ________        __
- |       |.-----.-----.-----.|  |  |  |.----.|  |_
- |   -   ||  _  |  -__|     ||  |  |  ||   _||   _|
- |_______||   __|_____|__|__||________||__|  |____|
-          |__| W I R E L E S S   F R E E D O M
- -----------------------------------------------------
- Linxdot 2.0.0.05-OPEN, A01
- -----------------------------------------------------
-sh: syntax error: unexpected "(" (expecting ")")

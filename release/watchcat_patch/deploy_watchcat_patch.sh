@@ -438,13 +438,19 @@ EOF
 
 (head -n 1 "$TMP"; echo; cat "$PATCH"; tail -n +2 "$TMP") > /tmp/watchcat.sh.new
 
-sed '/^\*)/i\
-service_recover)\
-\twatchcat_service_recover "$2" "$3" "$4" "$5" "$6" "$7" "${8}" "${9}" "${10}" "${11}" "${12}" "${13}"\
-
-\t;;\
+# Insert service_recover case arm before default "*)" using awk (BusyBox-compatible)
+awk '
+  BEGIN { inserted=0 }
+  /^\*\)/ && inserted==0 {
+    print "service_recover)"
+    print "\twatchcat_service_recover \"$2\" \"$3\" \"$4\" \"$5\" \"$6\" \"$7\" \"${8}\" \"${9}\" \"${10}\" \"${11}\" \"${12}\" \"${13}\""
+    print "\t;;"
+    inserted=1
+  }
+  { print }
 ' /tmp/watchcat.sh.new > /tmp/watchcat.sh.final
 
+# Remove any duplicate watchcat_service_recover() definitions that may still exist
 awk '
   /^watchcat_service_recover\(\)/ {
     seen++

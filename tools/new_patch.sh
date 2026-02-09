@@ -12,7 +12,9 @@ TOPIC=${1:-}
 DIR="patch_${TOPIC}"
 [ -e "$DIR" ] && { echo "exists: $DIR" >&2; exit 1; }
 
-mkdir -p "$DIR"/{docs,tools,notes,action_items,memory,baseline,evidence,logs}
+# NOTE: avoid brace-expansion for portability (/bin/sh may not support it)
+mkdir -p "$DIR/docs" "$DIR/tools" "$DIR/notes" "$DIR/action_items" \
+  "$DIR/memory" "$DIR/baseline" "$DIR/evidence" "$DIR/logs"
 
 cat > "$DIR/README.md" <<'MD'
 # PATCH: patch_<topic>

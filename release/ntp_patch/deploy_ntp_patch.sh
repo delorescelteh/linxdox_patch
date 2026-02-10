@@ -116,7 +116,8 @@ else
 fi
 EOF
 
-install -m 0755 /tmp/ntp_health.sh "$HEALTH_BIN"
+cp -a /tmp/ntp_health.sh "$HEALTH_BIN"
+chmod 0755 "$HEALTH_BIN"
 
 # --- install init.d service
 cat > "$INITD" <<'INIT'

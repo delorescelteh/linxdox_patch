@@ -18,46 +18,34 @@ NOW_ISO=$(date -Iseconds 2>/dev/null || date)
 RELIABLE=0
 REASON="unknown"
 SUMMARY="NTP status unknown"
+REACHABLE_COUNT=0
 
 if command -v chronyc >/dev/null 2>&1; then
-  # chronyc may fail if daemon not ready
-  TRACK=$(chronyc -n tracking 2>/dev/null || true)
+  # Determine reachability: if ALL sources have Reach=0, treat as unreachable.
+  # chronyc sources format:
+  # MS Name/IP Stratum Poll Reach LastRx ...
+  SOURCES=$(chronyc -n sources 2>/dev/null || true)
+  REACHABLE_COUNT=$(printf "%s\n" "$SOURCES" | awk 'NR>2 && NF>0 { if ($5 != "0") c++ } END { print c+0 }')
 
-  # Determine sync via Leap status (preferred)
+  TRACK=$(chronyc -n tracking 2>/dev/null || true)
   LEAP=$(printf "%s\n" "$TRACK" | awk -F': *' '/^Leap status/ {print $2; exit}')
   REFID=$(printf "%s\n" "$TRACK" | awk -F': *' '/^Reference ID/ {print $2; exit}')
   STRATUM=$(printf "%s\n" "$TRACK" | awk -F': *' '/^Stratum/ {print $2; exit}')
-  REFTIME=$(printf "%s\n" "$TRACK" | awk -F': *' '/^Ref time/ {print $2; exit}')
-  LASTOFF=$(printf "%s\n" "$TRACK" | awk -F': *' '/^Last offset/ {print $2; exit}')
 
-  if [ -n "${LEAP:-}" ]; then
-    case "$LEAP" in
-      Normal)
-        RELIABLE=1
-        REASON="chrony_synced"
-        SUMMARY="NTP synced (chrony): stratum=${STRATUM:-?}, refid=${REFID:-?}, ref_time=${REFTIME:-?}, last_offset=${LASTOFF:-?}"
-        ;;
-      *Not*sync*|*not*sync*)
-        RELIABLE=0
-        REASON="chrony_not_synchronised"
-        SUMMARY="NTP NOT synced (chrony): leap_status=$LEAP"
-        ;;
-      *)
-        # Other leap statuses exist; treat non-Normal as not reliable
-        RELIABLE=0
-        REASON="chrony_leap_$LEAP"
-        SUMMARY="NTP NOT reliable (chrony): leap_status=$LEAP"
-        ;;
-    esac
-  else
+  if [ "$REACHABLE_COUNT" -le 0 ] 2>/dev/null; then
     RELIABLE=0
-    REASON="chrony_no_tracking"
-    SUMMARY="NTP NOT reliable: chronyc tracking unavailable"
+    REASON="ntp_unreachable"
+    SUMMARY="NTP unreachable: cannot reach any NTP server (chrony sources reach=0)"
+  else
+    # Only show warning when unreachable; otherwise mark as reliable enough for banner suppression.
+    RELIABLE=1
+    REASON="ntp_reachable"
+    SUMMARY="NTP reachable: sources_reachable=$REACHABLE_COUNT, leap_status=${LEAP:-?}, stratum=${STRATUM:-?}, refid=${REFID:-?}"
   fi
 else
   RELIABLE=0
   REASON="chronyc_missing"
-  SUMMARY="NTP NOT reliable: chronyc not installed"
+  SUMMARY="NTP unreachable: chronyc not installed"
 fi
 
 # Write outputs atomically
@@ -67,6 +55,7 @@ TMP=$(mktemp /tmp/ntp_health.XXXXXX)
   echo "time_epoch=$NOW_EPOCH"
   echo "reliable=$RELIABLE"
   echo "reason=$REASON"
+  echo "sources_reachable=$REACHABLE_COUNT"
 } > "$TMP"
 mv "$TMP" "$OUT_META"
 

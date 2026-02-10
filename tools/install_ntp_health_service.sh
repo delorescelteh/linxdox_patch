@@ -71,6 +71,7 @@ chmod 0755 "$INITD"
 /etc/init.d/ntp-health restart || /etc/init.d/ntp-health start || true
 
 # Patch login page: show warning only if /tmp/ntp_health.unreliable exists
+# (our ntp_health.sh sets /tmp/ntp_health.unreliable ONLY when it cannot reach any NTP server)
 cp -a "$LOGIN" "$BKDIR/sysauth.htm" || true
 
 # If already patched, do nothing
@@ -83,8 +84,8 @@ if ! grep -qF "$BEGIN" "$LOGIN"; then
         print "<% local fs = require \"nixio.fs\" %>"
         print "<% if fs.access(\"/tmp/ntp_health.unreliable\") then %>"
         print "<div class=\"alert-message warning\" style=\"margin-top: 12px;\">"
-        print "  <p><strong>注意：</strong>目前系統時間『可能不可靠』，因為設備尚未與 NTP 完成同步或 NTP 不可達。請務必設定可到達的 NTP 伺服器（建議內網 NTP）。</p>"
-        print "  <p><strong>Warning:</strong> The system time is currently <em>not reliable</em> because the device is not synced to NTP or NTP is unreachable. Please configure a reachable NTP server (preferably an intranet NTP source).</p>"
+        print "  <p><strong>注意：</strong>此設備目前<strong>無法連線到任何 NTP 伺服器</strong>，系統時間可能不正確，可能造成日誌、憑證、排程、清理策略等行為不可靠並帶來風險。請設定『可到達的』NTP 伺服器（建議使用內網 NTP）。</p>"
+        print "  <p><strong>Warning:</strong> This device currently <strong>cannot reach any NTP server</strong>. The system time may be incorrect and may cause risks (logs/certificates/schedules/cleanup). Please configure a reachable NTP server (preferably an intranet NTP source).</p>"
         print "  <p><strong>Status:</strong> <%=pcdata(fs.readfile(\"/tmp/ntp_health.txt\") or \"(no status)\")%></p>"
         print "</div>"
         print "<% end %>"

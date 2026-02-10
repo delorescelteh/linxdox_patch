@@ -43,15 +43,21 @@ if grep -qF "$BEGIN" "$FILE"; then
 fi
 
 # Insert right after <%+header%>
+# Show ONLY when /tmp/ntp_health.unreliable exists.
+# (Install + update /usr/bin/ntp_health.sh via install_ntp_health_service.sh)
 awk -v b="$BEGIN" -v e="$END" '
   {
     print
     if ($0 ~ /<%\+header%>/) {
       print b
+      print "<% local fs = require \"nixio.fs\" %>"
+      print "<% if fs.access(\"/tmp/ntp_health.unreliable\") then %>"
       print "<div class=\"alert-message warning\" style=\"margin-top: 12px;\">"
-      print "  <p><strong>注意：</strong>若此設備未設定可連線的 NTP 伺服器或無法連線到 NTP，系統時間可能不正確，造成日誌、憑證、排程、清理策略等行為不可靠，並帶來風險。請務必設定『可到達的』NTP 伺服器（建議使用內網 NTP）。</p>"
-      print "  <p><strong>Warning:</strong> If this device is not configured with a reachable NTP server (or cannot reach NTP), the system time may be incorrect. This can make logs, certificates, schedules, and cleanup/retention behavior unreliable and may introduce risk. Please configure a reachable NTP server (preferably an intranet NTP source).</p>"
+      print "  <p><strong>注意：</strong>此設備目前<strong>無法連線到任何 NTP 伺服器</strong>，系統時間可能不正確，可能造成日誌、憑證、排程、清理策略等行為不可靠並帶來風險。請設定『可到達的』NTP 伺服器（建議使用內網 NTP）。</p>"
+      print "  <p><strong>Warning:</strong> This device currently <strong>cannot reach any NTP server</strong>. The system time may be incorrect and may cause risks (logs/certificates/schedules/cleanup). Please configure a reachable NTP server (preferably an intranet NTP source).</p>"
+      print "  <p><strong>Status:</strong> <%=pcdata(fs.readfile(\"/tmp/ntp_health.txt\") or \"(no status)\")%></p>"
       print "</div>"
+      print "<% end %>"
       print e
     }
   }

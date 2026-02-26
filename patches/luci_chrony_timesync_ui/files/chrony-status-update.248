@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+mkdir -p /var/run/chrony-status 2>/dev/null || true
+
+# chrony runtime
+if command -v chronyc >/dev/null 2>&1; then
+  chronyc -n sources 2>/dev/null > /var/run/chrony-status/sources.txt || true
+  chronyc -n tracking 2>/dev/null > /var/run/chrony-status/tracking.txt || true
+else
+  echo "chronyc not found" > /var/run/chrony-status/sources.txt
+  echo "chronyc not found" > /var/run/chrony-status/tracking.txt
+fi
+
+# DHCP lease advertised NTP server (if any)
+if command -v ifstatus >/dev/null 2>&1 && command -v jsonfilter >/dev/null 2>&1; then
+  ifstatus wan 2>/dev/null | jsonfilter -e "@.data.ntpserver" 2>/dev/null > /var/run/chrony-status/dhcp_lease_ntpserver.txt || true
+fi
+
+(date -Iseconds 2>/dev/null || date) > /var/run/chrony-status/updated_at.txt 2>/dev/null || true

@@ -15,3 +15,6 @@ report_*.json
 
 # dist artifacts
 /dist/
+
+# release artifacts
+/release/*.tar.gz
